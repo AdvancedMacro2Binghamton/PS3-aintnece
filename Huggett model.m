@@ -1,0 +1,109 @@
+% PROGRAM NAME: ps4huggett.m
+clear, clc
+
+% PARAMETERS
+beta = .9932; %discount factor 
+sigma = 1.5; % coefficient of risk aversion
+b = 0.5; % replacement ratio (unemployment benefits)
+y_s = [1, b]; % endowment in employment states
+PI = [.97 .03; .5 .5]; % transition matrix
+
+
+% ASSET VECTOR
+a_lo = -2; %lower bound of grid points
+a_hi = 5;%upper bound of grid points
+num_a = 1000;
+
+a = linspace(a_lo, a_hi, num_a); % asset (row) vector
+
+% INITIAL GUESS FOR q
+q_min = 0.98;
+q_max = 1.1;
+
+% ITERATE OVER ASSET PRICES
+aggsav = 1 ;
+while abs(aggsav) >= 0.01
+    q_guess = (q_min + q_max) / 2;
+    % CURRENT RETURN (UTILITY) FUNCTION
+    cons = bsxfun(@minus, a', q_guess * a);
+    cons = bsxfun(@plus, cons, permute(y_s, [1 3 2]));
+    ret = (cons .^ (1-sigma)) ./ (1 - sigma); % current period utility
+    ret(cons<0)=-Inf;
+    
+    % INITIAL VALUE FUNCTION GUESS
+    v_guess = zeros(2, num_a);
+    
+    % VALUE FUNCTION ITERATION
+    v_tol = 1;
+    while v_tol >1e-06
+        % CONSTRUCT RETURN + EXPECTED CONTINUATION VALUE
+        value_mat=ret+beta*permute(PI*v_guess,[3 2 1]);
+        % CHOOSE HIGHEST VALUE (ASSOCIATED WITH a' CHOICE)
+        [vfn pol_indx]=max(value_mat,[],2);
+        vfn=permute(vfn,[3 1 2]);
+        v_tol=max(max(abs(vfn-v_guess)));
+        v_guess=vfn;
+  
+    end
+    
+    % KEEP DECSISION RULE
+    pol_indx = permute(pol_indx,[3 1 2]);
+    pol_fn=a(pol_indx);
+
+    % SET UP INITITAL DISTRIBUTION
+
+    Mu=ones(size(pol_fn))/numel(pol_fn);
+    % ITERATE OVER DISTRIBUTIONS
+    
+    MuNew = zeros(size(Mu));
+    mu_tol=1;
+    while mu_tol>1e-06
+        [emp_ind, a_ind, mass] = find(Mu);
+        MuNew = zeros(size(Mu));
+    for ii = 1:length(emp_ind)
+        apr_ind = pol_indx(emp_ind(ii), a_ind(ii)); 
+        MuNew(:, apr_ind) = MuNew(:, apr_ind) + ...
+            (PI(emp_ind(ii), :) * mass(ii))';
+    end
+    mu_tol=max(max(abs(MuNew-Mu)));
+    Mu=MuNew;
+    end
+    aggsav=sum(sum(Mu.*pol_fn));
+    if aggsav>0
+        q_min=q_guess;
+    else
+        q_max=q_guess;
+    end   
+end
+y=[reshape(bsxfun(@plus,a,y_s'),[numel(pol_fn) 1]),reshape(repmat(y_s',...
+1,num_a),[numel(pol_fn) 1])]; %Wealth & Income
+mu=reshape(Mu,[numel(pol_fn) 1]);
+wd=sortrows([mu mu.*y(:,1) y(:,1)],3);
+figure;
+plot(wd(1:1000,3),wd(1:1000,1),'b');
+hold on;
+plot(wd(1001:2000,3),wd(1001:2000,1),'r');
+axis([-2.5 4 0 1]);
+axis('auto y');
+title('Wealth Distribution');
+legend('Employed','Unemployed','Location','northwest');
+for m=1:2
+c=cumsum(sortrows([mu mu.*y(:,m) y(:,m)],3));
+L=bsxfun(@rdivide,c,c(end,:))*100;
+yi=repmat(y(:,m),1,numel(pol_fn));
+yj=repmat(transpose(y(:,m)),numel(pol_fn),1);
+g(m)=sum(sum(abs(yi-yj)))/sum(y(:,m))/numel(pol_fn)/2;
+figure;
+area(L(:,1),L(:,2));
+axis([0 100 0 100]);
+axis('auto y')
+hold on;
+fplot(@(x) x,':');
+title(['Gini Coefficient=',num2str(g(m))]);
+end
+P=PI^1000;
+c_bar=P(1,:)*y_s';
+Wfb=c_bar^(1-sigma)/(1-sigma)/(1-beta); % Complete market welfare
+F=numel(vfn(vfn<Wfb))/numel(vfn); % Fraction of households who would benefit
+lambda=(Wfb./vfn).^(1/(1-sigma))-1; % Consumption equivalence
+welfare_tot=sum(sum(lambda.*Mu)); % Economy-wide welfare
